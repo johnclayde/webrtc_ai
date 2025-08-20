@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"/><title>AI Bot (hidden)</title>
+<script src="https://unpkg.com/janus-gateway-js@0.10.0/dist/janus.js"></script>
+</head>
+<body>
+<script>
+  const JANUS_SERVER = "ws://localhost:8188";
+  let janus, handle;
+  // 填写要订阅的 publisher id（同房间）
+  const PUBLISHER_ID = 1; // 启动时改为实际 publisher id
+
+  async function start() {
+    janus = new Janus({ server: JANUS_SERVER, success: attach, error: console.error });
+  }
+
+  function attach() {
+    janus.attach({
+      plugin: "janus.plugin.videoroom",
+      success: (h) => {
+        handle = h;
+        // join as subscriber to publisher feed
+        handle.send({ message: { request: "join", room: 1234, ptype: "subscriber", feed: PUBLISHER_ID } });
+      },
+      onmessage: (msg, jsep) => {
+        console.log("AI onmessage:", msg);
+        if (jsep) {
+          handle.createAnswer({
+            jsep,
+            media: { audioSend: false, videoSend: false }, // we're only subscribing
+            success: (answer) => handle.send({ message: { request: "start" }, jsep: answer })
+          });
+        }
+      },
+      onremotestream: (s) => {
+        // 在真实 AI 中处理 s（例如把音频送到 ASR 引擎）
+        console.log("AI got remote stream (length):", s ? s.getAudioTracks().length : 0);
+      },
+      ondata: (data) => {
+        console.log("AI received data:", data);
+      },
+      oncleanup: () => console.log("AI cleaned up")
+    });
+  }
+
+  // 模拟 ASR，将字幕通过 datachannel 广播回房间
+  function sendCaption(text) {
+    if (!handle) return;
+    const payload = { type: "asr.partial", text, ts: Date.now() };
+    // Janus 提供 send() 的 data 发送接口，传给 plugin，Janus 会转发给 room
+    handle.data({ text: JSON.stringify(payload) });
+  }
+
+  // 每 2s 发送一句模拟字幕（真实场景换成ASR推送）
+  let i=0;
+  setInterval(()=> {
+    sendCaption("模拟字幕句子 #" + (++i));
+  }, 2000);
+
+  start();
+</script>
+</body>
+</html>
