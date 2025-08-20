@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Janus Publisher (simulcast)</title>
+  <script src="https://unpkg.com/jquery@3.6.0/dist/jquery.min.js"></script>
+  <!-- 请把 janus.js 换成你本地或 CDN 的 janus.js -->
+  <script src="https://unpkg.com/janus-gateway-js@0.10.0/dist/janus.js"></script>
+  <style>video{width:480px;border:1px solid #ccc}</style>
+</head>
+<body>
+  <h3>Publisher (simulcast)</h3>
+  <video id="localVideo" autoplay muted playsinline></video>
+  <div>
+    <button id="start">Start Publishing</button>
+    <button id="stop">Stop</button>
+  </div>
+  <script>
+    const JANUS_SERVER = "ws://localhost:8188"; // 或 ws://your-janus:8188
+    let janus = null, sfutest = null, myid = null, mypvtid = null;
+    let localStream = null;
+
+    async function initJanus() {
+      janus = new Janus({
+        server: JANUS_SERVER,
+        success: () => {
+          janus.attach({
+            plugin: "janus.plugin.videoroom",
+            success: (pluginHandle) => {
+              sfutest = pluginHandle;
+              console.log("Plugin attached! (" + sfutest.getPlugin() + ", id=" + sfutest.getId() + ")");
+            },
+            error: (err) => console.error("Error attaching plugin:", err),
+            onmessage: (msg, jsep) => {
+              console.log("Message:", msg);
+              if (jsep) {
+                console.log("Handling SDP as well...", jsep);
+                sfutest.handleRemoteJsep({ jsep });
+              }
+            },
+            onlocalstream: (stream) => {
+              const video = document.getElementById('localVideo');
+              Janus.attachMediaStream(video, stream);
+              localStream = stream;
+            },
+            oncleanup: () => console.log("Cleanup")
+          });
+        },
+        error: (err) => console.error(err)
+      });
+    }
+
+    document.getElementById('start').onclick = async () => {
+      if (!janus) await initJanus();
+      // 获取本地媒体
+      const constraints = {
+        audio: { channelCount: 1, sampleRate: 48000 },
+        video: { width: 1280, height: 720, frameRate: 30 }
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      // 创建房间或加入房间为 publisher
+      const create = { request: "join", room: 1234, ptype: "publisher", display: "host" };
+      sfutest.send({ message: create });
+      // createOffer 时启用 simulcast
+      sfutest.createOffer({
+        media: { audioRecv: false, videoRecv: false, audioSend: true, videoSend: true },
+        simulcast: true,
+        success: (jsep) => {
+          const publish = { request: "publish", audio: true, video: true, bitrate: 2500000 };
+          sfutest.send({ message: publish, jsep });
+        },
+        error: (err) => console.error("Create offer error:", err),
+        stream
+      });
+    };
+
+    document.getElementById('stop').onclick = () => {
+      if (sfutest) {
+        sfutest.send({ message: { request: "leave" } });
+        if (localStream) {
+          localStream.getTracks().forEach(t => t.stop());
+        }
+      }
+    };
+
+    // init
+    initJanus();
+  </script>
+</body>
+</html>
