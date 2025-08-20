@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Janus Subscriber</title>
+  <script src="https://unpkg.com/jquery@3.6.0/dist/jquery.min.js"></script>
+  <script src="https://unpkg.com/janus-gateway-js@0.10.0/dist/janus.js"></script>
+  <style>video{width:480px;border:1px solid #ccc} #captions{font-size:18px;color:#222;margin-top:8px}</style>
+</head>
+<body>
+  <h3>Subscriber</h3>
+  <div>
+    Publisher ID: <input id="publisherId" value="" />
+    <button id="joinBtn">Join as Subscriber</button>
+  </div>
+  <video id="remoteVideo" autoplay playsinline></video>
+  <div id="captions">[captions will appear here]</div>
+
+  <script>
+    const JANUS_SERVER = "ws://localhost:8188";
+    let janus, handle;
+
+    async function init() {
+      janus = new Janus({
+        server: JANUS_SERVER,
+        success: () => console.log("Janus connected"),
+        error: e => console.error(e)
+      });
+    }
+
+    document.getElementById('joinBtn').onclick = async () => {
+      const feed = parseInt(document.getElementById('publisherId').value);
+      if (!feed) return alert("请输入 publisher id");
+
+      janus.attach({
+        plugin: "janus.plugin.videoroom",
+        success: (h) => {
+          handle = h;
+          console.log("Subscriber attached", handle.getId());
+          const joinreq = { request: "join", room: 1234, ptype: "subscriber", feed: feed };
+          handle.send({ message: joinreq });
+        },
+        onmessage: (msg, jsep) => {
+          console.log("onmessage", msg);
+          if (msg["error"]) {
+            console.error("Error:", msg["error"]);
+            return;
+          }
+          if (jsep) {
+            handle.createAnswer({
+              jsep,
+              media: { audioSend: false, videoSend: false },
+              success: (answer) => handle.send({ message: { request: "start" }, jsep: answer }),
+              error: (err) => console.error(err)
+            });
+          }
+        },
+        onremotestream: (stream) => {
+          const video = document.getElementById('remoteVideo');
+          Janus.attachMediaStream(video, stream);
+        },
+        ondata: (data) => {
+          // Janus 会把 datachannel 消息传到这里（文本）
+          // data 可能是字符串或 JSON（取决于发送方），AI 应发送 JSON 包含 type=asr.partial
+          try {
+            const obj = typeof data === 'string' ? JSON.parse(data) : data;
+            if (obj.type === 'asr.partial' || obj.type === 'caption') {
+              document.getElementById('captions').innerText = obj.text || JSON.stringify(obj);
+            } else {
+              console.log("data:", obj);
+            }
+          } catch (e) {
+            console.log("raw data:", data);
+          }
+        },
+        oncleanup: () => console.log("cleanup")
+      });
+    };
+
+    init();
+  </script>
+</body>
+</html>
